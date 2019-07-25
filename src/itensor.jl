@@ -14,13 +14,19 @@ export ITensor,
        scalar,
        store
 
-mutable struct ITensor
+mutable struct ITensor{N,T,S} <: AbstractArray{T,N}
   inds::IndexSet
-  store::TensorStorage
+  store::S
   #TODO: check that the storage is consistent with the
-  #total dimension of the indices (possibly only in debug mode);
-  ITensor(is::IndexSet,st::T) where T = new(is,st)
+- #total dimension of the indices (possibly only in debug mode);
+  function ITensor(is::IndexSet, st::TensorStorage)
+    # length(inds) == ndims(st) || throw(DimensionMismatch("must have one index per store dimension"))
+    new{length(is),eltype(st),typeof(st)}(is,st)
+  end
 end
+
+Base.ndims(A::ITensor) = order(inds(A))
+Base.size(A::ITensor) = dims(inds(A))
 
 ITensor() = ITensor(IndexSet(),Dense{Nothing}())
 ITensor(is::IndexSet) = ITensor(Float64,is...)
@@ -75,8 +81,8 @@ copy(T::ITensor) = ITensor(copy(inds(T)),copy(store(T)))
 
 Array(T::ITensor) = storage_convert(Array,store(T),inds(T))
 
-function getindex(T::ITensor,vals::Int...) 
-  if order(T) ≠ length(vals) 
+function getindex(T::ITensor,vals::Int...)
+  if order(T) ≠ length(vals)
     error("In getindex(::ITensor,::Int..), number of \\
            values provided ($(length(vals))) must equal \\
            order of ITensor ($(order(T)))")
@@ -107,7 +113,7 @@ function setindex!(T::ITensor,x::Number,ivs::IndexVal...)
 end
 
 function setindex!(T::ITensor,
-                   x::Union{<:Number, AbstractArray{<:Number}}, 
+                   x::Union{<:Number, AbstractArray{<:Number}},
                    ivs::Union{IndexVal, AbstractVector{IndexVal}}...)
   remap_ivs = map(x->x isa IndexVal ? x : x[1], ivs)
   p = calculate_permutation(inds(T),remap_ivs)
@@ -142,6 +148,7 @@ mapprime(A::ITensor,vargs...) = ITensor(mapprime(inds(A),vargs...),store(A))
 
 swapprime(A::ITensor,vargs...) = ITensor(swapprime(inds(A),vargs...),store(A))
 
+
 addtags(A::ITensor,vargs...) = ITensor(addtags(inds(A),vargs...),store(A))
 
 removetags(A::ITensor,vargs...) = ITensor(removetags(inds(A),vargs...),store(A))
@@ -153,7 +160,7 @@ settags(A::ITensor,vargs...) = ITensor(settags(inds(A),vargs...),store(A))
 swaptags(A::ITensor,vargs...) = ITensor(swaptags(inds(A),vargs...),store(A))
 
 function ==(A::ITensor,B::ITensor)
-  !hassameinds(A,B) && return false 
+  !hassameinds(A,B) && return false
   p = calculate_permutation(inds(B),inds(A))
   for i ∈ CartesianIndices(dims(A))
     A[Tuple(i)...] ≠ B[Tuple(i)[p]...] && return false
@@ -206,18 +213,21 @@ function *(A::ITensor,x::Number)
 end
 *(x::Number,A::ITensor) = A*x
 #TODO: make a proper element-wise division
-/(A::ITensor,x::Number) = A*(1.0/x)
+/(A::ITensor,x::Number) = A*(1/x)
 
--(A::ITensor) = -one(eltype(A))*A
-function +(A::ITensor,B::ITensor)
-  C = copy(A)
-  add!(C,B)
-  return C
-end
-function -(A::ITensor,B::ITensor)
-  C = copy(A)
-  add!(C,-1,B)
-  return C
+-(A::ITensor) = (-1)*A
+
++(A::ITensor,B::ITensor) = add!(copy_promote(A, B),B)
+-(A::ITensor,B::ITensor) = add!(copy_promote(A, B),-1,B)
+
+function copy_promote(A::ITensor,B::ITensor)
+  if eltype(A) == eltype(B)
+    C = copy(A)
+  else
+    CT = promote_type(eltype(A),eltype(B))
+    C = ITensor(inds(A), convert(Dense{CT}, store(A))) # TODO promote_type on storage?
+  end
+  C
 end
 
 #TODO: Add special case of A==B
@@ -265,7 +275,8 @@ Add ITensors B and A and store the result in B.
 B .+= A
 """
 function add!(B::ITensor,A::ITensor)
-  B.store = storage_add!(store(B),inds(B),store(A),inds(A))
+  storage_add!(store(B),inds(B),store(A),inds(A))
+  B
 end
 
 """
@@ -276,7 +287,7 @@ Add ITensors B and α*A and store the result in B.
 B .+= α .* A
 """
 function add!(A::ITensor,x::Number,B::ITensor)
-  A.store = storage_add!(store(A),inds(A),store(B),inds(B),x)
+  storage_add!(store(A),inds(A),store(B),inds(B),x)
   return A
 end
 
@@ -288,7 +299,7 @@ Add ITensors α*A and β*B and store the result in C.
 C .= α .* A .+ β .* B
 """
 function add!(A::ITensor,y::Number,x::Number,B::ITensor)
-  A.store = storage_add!(store(A),inds(A),y,store(B),inds(B),x)
+  storage_add!(store(A),inds(A),y,store(B),inds(B),x)
   return A
 end
 
@@ -351,28 +362,27 @@ end
 delta(inds::Index...) = delta(Float64,inds...)
 const δ = delta
 
-function show_info(io::IO,
-                   T::ITensor)
-  print(io,"ITensor ord=$(order(T))")
+function Base.summary(io::IO, T::ITensor)
+  print(io,"ITensor{$(order(T))}")
   for i = 1:order(T)
     print(io," ",inds(T)[i])
   end
   print(io,"\n",typeof(store(T)))
 end
 
-function show(io::IO,T::ITensor)
-  show_info(io,T)
-  print(io,"\n")
-  if !isNull(T)
-    Base.print_array(io,reshape(data(store(T)),dims(T)))
-  end
-end
+# function show(io::IO,T::ITensor)
+#   show_info(io,T)
+#   print(io,"\n")
+#   if !isNull(T)
+#     Base.print_array(io,reshape(data(store(T)),dims(T)))
+#   end
+# end
 
-function show(io::IO,
-              mime::MIME"text/plain",
-              T::ITensor)
-  show_info(io,T)
-end
+# function show(io::IO,
+#               mime::MIME"text/plain",
+#               T::ITensor)
+#   show_info(io,T)
+# end
 
 function similar(T::ITensor,
                  element_type=eltype(T))::ITensor
