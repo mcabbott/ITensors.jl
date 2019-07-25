@@ -1,7 +1,7 @@
 
 module ITensors
 
-function pause() 
+function pause()
   println("(paused)")
   readline(stdin)
 end
@@ -37,7 +37,7 @@ import Base.adjoint,
        Base./,
        Base.^,
        Base.complex,
-       Base.setdiff,  # Since setdiff doesn't 
+       Base.setdiff,  # Since setdiff doesn't
                       # work with IndexSet, overload it
        LinearAlgebra.axpby!,
        LinearAlgebra.axpy!,
@@ -62,6 +62,7 @@ include("storage/svd.jl")
 include("itensor.jl")
 include("decomp.jl")
 include("iterativesolvers.jl")
+include("util/wrapper.jl")
 
 ###########################################################
 # MPS/MPO
